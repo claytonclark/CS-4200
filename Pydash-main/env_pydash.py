@@ -28,6 +28,8 @@ class PydashEnv():
         self.coins = 0
         self.angle = 0
         self.level = 0
+        
+        self.step_size = 4
 
         # list
         self.particles = []
@@ -87,11 +89,12 @@ class PydashEnv():
         # create object of player class
         self.player = pydash.Player(self.avatar, self.elements, (150, 150), self.player_sprite)
 
+        self.jump_velocity = self.player.jump_amount
 
         n_actions = 2
         self.action_space = spaces.Discrete(n_actions)
     
-        self.observation_space = spaces.Box(low=0, high=800,
+        self.observation_space = spaces.Box(low=0, high=8,
                                             shape=(1,), dtype=np.float32)
 
     def reset(self):
@@ -106,11 +109,11 @@ class PydashEnv():
         self.player_sprite = pygame.sprite.Group()
         self.elements = pygame.sprite.Group()
         self.player = pydash.Player(self.avatar, self.elements, (150, 150), self.player_sprite)
-        pydash.init_level(
-                pydash.block_map(
+        self.init_level(
+                self.block_map(
                         level_num=self.levels[self.level]))
         # here we convert to float32 to make it more general (in case we want to use continuous actions)
-        return np.array([self.player_velocity]).astype(np.float32)
+        return np.array([self.fill]).astype(np.float32)
     
     def sample_action(self):
         return random.choice([0,1])
@@ -161,7 +164,7 @@ class PydashEnv():
             y += 32
             x = 0
 
-    def blitRotate(surf, image, pos, originpos: tuple, angle: float):
+    def blitRotate(self, surf, image, pos, originpos: tuple, angle: float):
         """
         rotate the player
         :param surf: Surface
@@ -192,26 +195,70 @@ class PydashEnv():
         # rotate and blit the image
         surf.blit(rotated_image, origin)
 
-    def eval_outcome(self, won: bool, died: bool):
+    def eval_outcome(self, win: bool, died: bool):
         """simple function to run the win or die screen after checking won or died"""
         done = False
-        if won:
-            #won_screen()
+        if win:
+            self.won_screen()
             done = True
             self.reset()
 
         if died:
             #death_screen()
+            self.fill = 0
+            self.attempts += 1
             done = True
             self.reset()
         return done
 
+    def won_screen(self):
+        """show this screen when beating a level"""
+        global attempts, level, fill
+        attempts = 0
+        self.player_sprite.clear(self.player.image, self.screen)
+        self.screen.fill(pygame.Color("yellow"))
+        txt_win1 = txt_win2 = "Nothing"
+        if self.level == 1:
+            if self.coins == 6:
+                txt_win1 = f"Coin{self.coins}/6! "
+                txt_win2 = "the game, Congratulations"
+        else:
+            txt_win1 = f"level{self.level}"
+            txt_win2 = f"Coins: {self.coins}/6. "
+        txt_win = f"{txt_win1} You beat {txt_win2}! Press SPACE to restart, or ESC to exit"
+
+        won_game = self.font.render(txt_win, True, pydash.BLUE)
+
+        self.screen.blit(won_game, (200, 300))
+        self.level += 1
+
+        self.wait_for_key()
+        self.reset()
+        
+    def wait_for_key(self):
+        """separate game loop for waiting for a key press while still running game loop"""
+        waiting = True
+        while waiting:
+            self.clock.tick(60)
+            pygame.display.flip()
+
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_SPACE:
+                        waiting = False
+                        self.reset()
+                    if event.key == pygame.K_ESCAPE:
+                        pygame.quit()    
+        
     def move_map(self):
         """moves obstacles along the screen"""
         for sprite in self.elements:
             sprite.rect.x -= self.CameraX
 
     def draw_stats(self,surf, money=0):
+        
         """
         draws progress bar for level, number of attempts, displays coins collected, and progressively changes progress bar
         colors
@@ -231,33 +278,28 @@ class PydashEnv():
         pydash.rect(surf, col, fill_rect, 0, 4)
         pydash.rect(surf, pydash.WHITE, outline_rect, 3, 4)
         surf.blit(tries, (BAR_LENGTH, 0))
-
-    def move_map(self):
-        """moves obstacles along the screen"""
-        for self.sprite in self.elements:
-            self.sprite.rect.x -= self.CameraX
-
+    
     def Play(self):
         
         self.player.vel.x = 6
 
         self.alpha_surf.fill((255, 255, 255, 1), special_flags=pygame.BLEND_RGBA_MULT)
 
-        self.player_sprite.update()
+        self.player.update()
         self.CameraX = self.player.vel.x  # for moving obstacles
         self.move_map()  # apply CameraX to all elements
 
         self.screen.blit(self.bg, (0, 0))  # Clear the screen(with the bg)
 
-        self.player.draw_particle_trail(self.player.rect.left - 1, self.player.rect.bottom + 2,
-                                pydash.WHITE)
-        self.screen.blit(self.alpha_surf, (0, 0))  # Blit the alpha_surf onto the screen.
+        #self.player.draw_particle_trail(self.player.rect.left - 1, self.player.rect.bottom + 2,
+        #                        pydash.WHITE)
+        #self.screen.blit(self.alpha_surf, (0, 0))  # Blit the alpha_surf onto the screen.
         self.draw_stats(self.screen, pydash.coin_count(self.coins))
 
         if self.player.isjump:
             """rotate the player by an angle and blit it if player is jumping"""
-            pydash.angle -= 8.1712  # this may be the angle needed to do a 360 deg turn in the length covered in one jump by player
-            self.blitRotate(self.screen, self.player.image, self.player.rect.center, (16, 16), pydash.angle)
+            self.angle -= 8.1712  # this may be the angle needed to do a 360 deg turn in the length covered in one jump by player
+            self.blitRotate(self.screen, self.player.image, self.player.rect.center, (16, 16), self.angle)
         else:
             """if player.isjump is false, then just blit it normally(by using Group().draw() for sprites"""
             self.player_sprite.draw(self.screen)  # draw player sprite group
@@ -274,34 +316,28 @@ class PydashEnv():
                     sys.exit()
 
         pygame.display.flip()
-        self.clock.tick(self.FRAME_RATE)
+        self.clock.tick(self.FRAME_RATE*10)
 
     def step(self, action):
-        print("in step function")
-        self.Play()
+        
         if action == self.JUMP:
-            self.jump_velocity = self.player.jump_amount
-            self.player.jump()
+            self.player.isjump = True
         elif action == self.NO_JUMP:
+            self.player.isjump = False
             pass
         else:
             raise ValueError("Received invalid action={} which is not part of the action space".format(action))
 
-        #self.Play()
+        self.Play()
         # Did we win or lose the game?
-        done = self.eval_outcome(self.player.won, self.player.died)
+        done = self.eval_outcome(self.player.win, self.player.died)
 
         # Null reward everywhere except when reaching the goal (left of the grid)
         reward = 5
         
-        return np.array(self.jump_velocity, reward, done)
+        return np.array((np.array([self.fill]).astype(np.float32), reward, done))
 
-    def render(self):
-        pass
-
-    def close(self):
-        pass
-    
-#env = PydashEnv()
-#while True:
- #   env.Play()
+# env = PydashEnv()
+# while True:
+#     action = env.sample_action()
+#     env.step(action)
